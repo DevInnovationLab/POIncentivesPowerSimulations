@@ -1,15 +1,20 @@
 #!/usr/bin/env python3
 """Stage 3: Full power sweep across the parameter grid.
 
-Usage (Mac M1, default):
+Supports both single-state (AP only) and pooled (AP + Odisha) modes.
+
+Usage (Mac M1, default — single state):
     python run_power_sweep.py --n_sims 1000
 
+Usage (pooled two-state):
+    python run_power_sweep.py --pooled --n_sims 1000
+
 Usage (HPC with SLURM job array):
-    # Submit as array job — each task handles a chunk of parameter combos
     python run_power_sweep.py --n_sims 1000 --hpc --chunk_id $SLURM_ARRAY_TASK_ID --n_chunks 5
+    python run_power_sweep.py --pooled --n_sims 1000 --hpc --chunk_id $SLURM_ARRAY_TASK_ID --n_chunks 5
 
     # After all chunks complete, merge:
-    python run_power_sweep.py --merge_chunks --n_chunks 5
+    python run_power_sweep.py --merge_chunks --n_chunks 5 [--pooled]
 """
 
 import argparse
@@ -22,76 +27,82 @@ import numpy as np
 import pandas as pd
 from tqdm import tqdm
 
-from config import PARAM_GRID, N_SIMS, SEED, TREATMENT_WEEKS
-from estimate import run_single_sim
-from generate_data import generate_panel
+from config import PARAM_GRID, POOLED_PARAM_GRID, N_SIMS, SEED
+from estimate import run_single_sim, run_pooled_sim
 
 # Default workers: Mac M1 has 8 cores (4P + 4E), use 6 to leave headroom
 DEFAULT_WORKERS_LOCAL = min(6, cpu_count())
 
 
 def run_power_for_combo(args):
-    """Run n_sims simulations for one parameter combination.
-
-    Parameters
-    ----------
-    args : tuple
-        (params_dict, n_sims, base_seed)
-
-    Returns
-    -------
-    dict
-        All param values plus power, mean_att, mean_se, sd_att.
-    """
+    """Run n_sims simulations for one single-state parameter combination."""
     params, n_sims, base_seed = args
 
-    att_list = []
-    se_list = []
-    rejected_list = []
-
+    results = []
     for i in range(n_sims):
-        seed = base_seed + i
-        res = run_single_sim(params, seed)
-        att_list.append(res['att_hat'])
-        se_list.append(res['se'])
-        rejected_list.append(res['rejected'])
+        res = run_single_sim(params, seed=base_seed + i)
+        results.append(res)
 
-    att_arr = np.array(att_list, dtype=float)
-    se_arr = np.array(se_list, dtype=float)
-    rej_arr = np.array(rejected_list, dtype=float)
+    att_arr = np.array([r['att_hat'] for r in results], dtype=float)
+    se_arr = np.array([r['se'] for r in results], dtype=float)
+    rej_arr = np.array([r['rejected'] for r in results], dtype=float)
 
-    # Derive tau for the record (using same finite-horizon formula as generate_data)
-    target_att = params.get('target_att', None)
-    rho = params['rho']
-    if target_att is not None:
-        T = TREATMENT_WEEKS
-        if rho == 0:
-            tau = target_att
-        else:
-            amp = (T - rho * (1 - rho ** T) / (1 - rho)) / (T * (1 - rho))
-            tau = target_att / amp
-    else:
-        tau = params.get('tau', np.nan)
-
-    result = {
+    return {
         'mu_baseline': params['mu_baseline'],
         'sigma_baseline': params['sigma_baseline'],
-        'target_att': target_att if target_att is not None else np.nan,
-        'tau': tau,
-        'rho': rho,
+        'target_att': params.get('target_att', np.nan),
+        'rho': params['rho'],
         'h_init': params['h_init'],
         'power': np.nanmean(rej_arr),
         'mean_att': np.nanmean(att_arr),
         'mean_se': np.nanmean(se_arr),
         'sd_att': np.nanstd(att_arr),
     }
-    return result
 
 
-def build_task_list(n_sims):
-    """Generate all parameter combos and return (tasks, param_names, all_combos)."""
-    param_names = list(PARAM_GRID.keys())
-    param_values = [PARAM_GRID[k] for k in param_names]
+def run_power_for_combo_pooled(args):
+    """Run n_sims simulations for one pooled parameter combination.
+
+    Returns dict with AP-only, Odisha-only, and pooled power.
+    """
+    params, n_sims, base_seed = args
+
+    results = []
+    for i in range(n_sims):
+        res = run_pooled_sim(params, seed=base_seed + i)
+        results.append(res)
+
+    def _summarize(key_prefix):
+        att = np.array([r[f'att_{key_prefix}'] for r in results], dtype=float)
+        se = np.array([r[f'se_{key_prefix}'] for r in results], dtype=float)
+        rej = np.array([r[f'rejected_{key_prefix}'] for r in results], dtype=float)
+        return {
+            f'power_{key_prefix}': np.nanmean(rej),
+            f'mean_att_{key_prefix}': np.nanmean(att),
+            f'mean_se_{key_prefix}': np.nanmean(se),
+            f'sd_att_{key_prefix}': np.nanstd(att),
+        }
+
+    row = {
+        'mu_baseline_ap': params['mu_baseline_ap'],
+        'mu_baseline_od': params['mu_baseline_od'],
+        'sigma_baseline': params['sigma_baseline'],
+        'target_att': params['target_att'],
+        'rho': params['rho'],
+        'h_init': params['h_init'],
+        'effect_ratio': params.get('effect_ratio', 1.0),
+    }
+    row.update(_summarize('ap'))
+    row.update(_summarize('od'))
+    row.update(_summarize('pooled'))
+
+    return row
+
+
+def build_task_list(param_grid, n_sims):
+    """Generate all parameter combos and return list of (params, n_sims, base_seed)."""
+    param_names = list(param_grid.keys())
+    param_values = [param_grid[k] for k in param_names]
     all_combos = list(itertools.product(*param_values))
 
     tasks = []
@@ -100,14 +111,14 @@ def build_task_list(n_sims):
         base_seed = SEED + combo_idx * n_sims
         tasks.append((params, n_sims, base_seed))
 
-    return tasks, param_names, all_combos
+    return tasks
 
 
-def merge_chunks(output_dir, n_chunks):
-    """Merge chunk CSV files into a single power_results.csv."""
+def merge_chunks(output_dir, n_chunks, prefix='power_results'):
+    """Merge chunk CSV files into a single results CSV."""
     chunks = []
     for i in range(n_chunks):
-        path = os.path.join(output_dir, f'power_results_chunk{i}.csv')
+        path = os.path.join(output_dir, f'{prefix}_chunk{i}.csv')
         if os.path.isfile(path):
             chunks.append(pd.read_csv(path))
         else:
@@ -118,14 +129,10 @@ def merge_chunks(output_dir, n_chunks):
         return
 
     df = pd.concat(chunks, ignore_index=True)
-    df = df.sort_values(
-        ['mu_baseline', 'sigma_baseline', 'target_att', 'rho', 'h_init']
-    ).reset_index(drop=True)
-
-    output_path = os.path.join(output_dir, 'power_results.csv')
+    output_path = os.path.join(output_dir, f'{prefix}.csv')
     df.to_csv(output_path, index=False)
     print(f"Merged {len(chunks)} chunks ({len(df)} combos) -> {output_path}")
-    print(f"Power range: {df['power'].min():.3f} - {df['power'].max():.3f}")
+    print(f"Power range: {df.filter(like='power').min().min():.3f} - {df.filter(like='power').max().max():.3f}")
 
 
 def main():
@@ -134,33 +141,28 @@ def main():
         formatter_class=argparse.RawDescriptionHelpFormatter,
         epilog="""
 HPC mode (SLURM):
-  Splits the 3,600 parameter combos across --n_chunks parallel jobs.
-  Each job uses all available cores on its node for within-combo parallelism.
+  Splits parameter combos across --n_chunks parallel jobs.
+  Each job uses all available cores on its node.
 
   Example SLURM script:
-    #SBATCH --array=0-35
-    #SBATCH --cpus-per-task=16
-    #SBATCH --mem=8G
-    #SBATCH --time=02:00:00
+    #SBATCH --array=0-4
+    #SBATCH --cpus-per-task=48
+    #SBATCH --mem=192G
     python run_power_sweep.py --n_sims 1000 --hpc \\
-        --chunk_id $SLURM_ARRAY_TASK_ID --n_chunks 36
+        --chunk_id $SLURM_ARRAY_TASK_ID --n_chunks 5
 
   After completion:
-    python run_power_sweep.py --merge_chunks --n_chunks 36
-
-Recommended HPC allocation (3,600 combos x 1,000 sims):
-  --n_chunks 5 (720 combos/chunk) with 48 cores and 192GB RAM per node (ssd partition)
-  Estimated wall time: ~1-2 hours per chunk
+    python run_power_sweep.py --merge_chunks --n_chunks 5
 """,
     )
     parser.add_argument('--n_sims', type=int, default=N_SIMS,
                         help=f"Simulations per combo (default: {N_SIMS})")
     parser.add_argument('--n_workers', type=int, default=None,
                         help=f"Parallel workers (default: {DEFAULT_WORKERS_LOCAL} local, all cores on HPC)")
-    parser.add_argument('--save_panels', action='store_true',
-                        help="Save one example panel per combo to output/panels/")
     parser.add_argument('--output_dir', type=str, default='output',
                         help="Output directory (default: output)")
+    parser.add_argument('--pooled', action='store_true',
+                        help="Run pooled (AP + Odisha) sweep instead of single-state")
 
     # HPC options
     parser.add_argument('--hpc', action='store_true',
@@ -170,33 +172,37 @@ Recommended HPC allocation (3,600 combos x 1,000 sims):
     parser.add_argument('--n_chunks', type=int, default=None,
                         help="Total number of HPC chunks")
     parser.add_argument('--merge_chunks', action='store_true',
-                        help="Merge chunk CSVs into power_results.csv (run after all chunks complete)")
+                        help="Merge chunk CSVs into final results (run after all chunks complete)")
 
     args = parser.parse_args()
+
+    prefix = 'pooled_power_results' if args.pooled else 'power_results'
 
     # Handle merge mode
     if args.merge_chunks:
         if args.n_chunks is None:
             parser.error("--merge_chunks requires --n_chunks")
-        merge_chunks(args.output_dir, args.n_chunks)
+        merge_chunks(args.output_dir, args.n_chunks, prefix=prefix)
         return
 
     # Set worker count
     if args.n_workers is not None:
         n_workers = args.n_workers
     elif args.hpc:
-        n_workers = cpu_count()  # use all cores on HPC node
+        n_workers = cpu_count()
     else:
         n_workers = DEFAULT_WORKERS_LOCAL
 
-    # Create output directories
     os.makedirs(args.output_dir, exist_ok=True)
-    if args.save_panels:
-        os.makedirs(os.path.join(args.output_dir, 'panels'), exist_ok=True)
 
-    # Build full task list
-    tasks, param_names, all_combos = build_task_list(args.n_sims)
+    # Build task list
+    param_grid = POOLED_PARAM_GRID if args.pooled else PARAM_GRID
+    worker_fn = run_power_for_combo_pooled if args.pooled else run_power_for_combo
+    tasks = build_task_list(param_grid, args.n_sims)
     n_total = len(tasks)
+
+    mode_label = "Pooled (AP + Odisha)" if args.pooled else "Single-state (AP)"
+    print(f"Mode: {mode_label}")
 
     # HPC: select chunk subset
     if args.hpc:
@@ -206,7 +212,6 @@ Recommended HPC allocation (3,600 combos x 1,000 sims):
         start = args.chunk_id * chunk_size
         end = min(start + chunk_size, n_total)
         tasks = tasks[start:end]
-        all_combos = all_combos[start:end]
         print(f"HPC mode: chunk {args.chunk_id}/{args.n_chunks}, "
               f"combos {start}-{end-1} ({len(tasks)} combos)")
 
@@ -216,25 +221,13 @@ Recommended HPC allocation (3,600 combos x 1,000 sims):
     print(f"Workers:                {n_workers}")
     print()
 
-    # Optionally save example panels
-    if args.save_panels:
-        print("Saving example panels...")
-        for combo_idx, (task_params, _, base_seed) in enumerate(tqdm(tasks, desc="Panels")):
-            rng = np.random.default_rng(base_seed)
-            panel = generate_panel(task_params, rng)
-            panel.to_csv(
-                os.path.join(args.output_dir, 'panels', f'panel_{combo_idx}.csv'),
-                index=False,
-            )
-        print()
-
-    # Run power sweep with multiprocessing
+    # Run power sweep
     t0 = time.time()
     results = []
 
     with Pool(processes=n_workers) as pool:
         for result in tqdm(
-            pool.imap_unordered(run_power_for_combo, tasks),
+            pool.imap_unordered(worker_fn, tasks),
             total=len(tasks),
             desc="Power sweep",
         ):
@@ -242,16 +235,12 @@ Recommended HPC allocation (3,600 combos x 1,000 sims):
 
     elapsed = time.time() - t0
 
-    # Collect into DataFrame and save
     df = pd.DataFrame(results)
-    df = df.sort_values(
-        ['mu_baseline', 'sigma_baseline', 'target_att', 'rho', 'h_init']
-    ).reset_index(drop=True)
 
     if args.hpc and args.chunk_id is not None:
-        output_path = os.path.join(args.output_dir, f'power_results_chunk{args.chunk_id}.csv')
+        output_path = os.path.join(args.output_dir, f'{prefix}_chunk{args.chunk_id}.csv')
     else:
-        output_path = os.path.join(args.output_dir, 'power_results.csv')
+        output_path = os.path.join(args.output_dir, f'{prefix}.csv')
     df.to_csv(output_path, index=False)
 
     # Summary
@@ -260,8 +249,10 @@ Recommended HPC allocation (3,600 combos x 1,000 sims):
     print(f"Completed {len(tasks)} combos x {args.n_sims} sims = {len(tasks) * args.n_sims:,} total")
     print(f"Time elapsed: {elapsed:.1f}s ({elapsed / 60:.1f} min)")
     print(f"Results saved to: {output_path}")
-    print(f"Power range: {df['power'].min():.3f} - {df['power'].max():.3f}")
-    print(f"Mean power:  {df['power'].mean():.3f}")
+    power_cols = [c for c in df.columns if c.startswith('power')]
+    for col in power_cols:
+        label = col.replace('power_', '').replace('power', 'overall') if args.pooled else 'overall'
+        print(f"  {label} power range: {df[col].min():.3f} - {df[col].max():.3f}")
     print("=" * 60)
 
 

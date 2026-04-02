@@ -15,25 +15,52 @@
 #
 # ssd partition specs: 48 cores/node, 192 GB RAM, max 5 nodes/user
 #
-# Allocation:
-#   - 5 array tasks (one per node) -> 720 combos per task
-#   - 48 cores per task -> full node, Python multiprocessing
-#   - 192 GB RAM per task -> full node memory
-#   - 4 hour wall time (conservative; expect ~1-2 hours)
-#
-# Total: 5 nodes x 48 cores = 240 CPUs (maxes out user limit)
+# Usage:
+#   sbatch submit_hpc.sh                    # single-state sweep (3600 combos)
+#   sbatch submit_hpc.sh --pooled           # pooled sweep
+#   sbatch submit_hpc.sh --comparison       # comprehensive comparison sweep
 # -------------------------------------------------------------------
 
 mkdir -p logs output
 
 module load python  # adjust to your module name if different
 
-python run_power_sweep.py \
-    --n_sims 1000 \
-    --hpc \
-    --chunk_id $SLURM_ARRAY_TASK_ID \
-    --n_chunks 5
+MODE="${1:-single}"
 
-# After all array tasks complete, run merge:
+if [ "$MODE" = "--comparison" ]; then
+    echo "Running comparison sweep (chunk $SLURM_ARRAY_TASK_ID of 5)"
+    python run_comparison_sweep.py \
+        --n_sims 1000 \
+        --hpc \
+        --chunk_id $SLURM_ARRAY_TASK_ID \
+        --n_chunks 5
+elif [ "$MODE" = "--pooled" ]; then
+    echo "Running pooled sweep (chunk $SLURM_ARRAY_TASK_ID of 5)"
+    python run_power_sweep.py \
+        --pooled \
+        --n_sims 1000 \
+        --hpc \
+        --chunk_id $SLURM_ARRAY_TASK_ID \
+        --n_chunks 5
+else
+    echo "Running single-state sweep (chunk $SLURM_ARRAY_TASK_ID of 5)"
+    python run_power_sweep.py \
+        --n_sims 1000 \
+        --hpc \
+        --chunk_id $SLURM_ARRAY_TASK_ID \
+        --n_chunks 5
+fi
+
+# After all array tasks complete, merge and visualize:
+#
+# Single-state:
 #   python run_power_sweep.py --merge_chunks --n_chunks 5
 #   python visualize.py
+#
+# Pooled:
+#   python run_power_sweep.py --pooled --merge_chunks --n_chunks 5
+#   python visualize.py --pooled
+#
+# Comparison:
+#   python run_comparison_sweep.py --merge_chunks --n_chunks 5
+#   python visualize_comparison.py

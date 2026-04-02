@@ -1,8 +1,11 @@
 #!/usr/bin/env python3
 """Stage 4: Visualization and MDE table from power simulation results.
 
+Supports both single-state and pooled (AP + Odisha) results.
+
 Usage:
     python visualize.py [--input output/power_results.csv] [--output_dir output]
+    python visualize.py --pooled [--input output/pooled_power_results.csv] [--output_dir output]
 """
 
 import argparse
@@ -33,16 +36,19 @@ SAVE_DPI = 150
 LABELS = {
     'target_att': 'Target Effect on Chlorination Rate',
     'mu_baseline': 'Baseline Compliance Rate',
+    'mu_baseline_ap': 'AP Baseline Compliance',
+    'mu_baseline_od': 'Odisha Baseline Compliance',
     'sigma_baseline': 'Compliance Heterogeneity (SD)',
     'rho': 'Behavioral Persistence (AR1)',
     'h_init': 'Initial Monitoring Effect',
+    'effect_ratio': 'Odisha Effect Ratio',
     'power': 'Statistical Power',
     'mde': 'Min. Detectable Effect (pp)',
 }
 
 
 # ---------------------------------------------------------------------------
-# Power curve plots
+# Single-state power curve plots
 # ---------------------------------------------------------------------------
 
 def plot_power_curves(df, output_dir):
@@ -88,7 +94,6 @@ def plot_power_curves(df, output_dir):
                 if idx == 0:
                     ax.legend(loc='lower right', fontsize=8, ncol=2)
 
-            # Hide unused subplots
             for idx in range(n_sigma, nrows * ncols):
                 axes[idx // ncols, idx % ncols].set_visible(False)
 
@@ -105,7 +110,7 @@ def plot_power_curves(df, output_dir):
 
 
 # ---------------------------------------------------------------------------
-# Power heatmaps
+# Single-state power heatmaps
 # ---------------------------------------------------------------------------
 
 def plot_power_heatmaps(df, output_dir):
@@ -154,19 +159,19 @@ def plot_power_heatmaps(df, output_dir):
 # MDE table with linear interpolation
 # ---------------------------------------------------------------------------
 
-def compute_mde_table(df):
+def compute_mde_table(df, power_col='power', group_cols=None):
     """Find minimum target_att achieving 80% power for each parameter combo.
 
     Uses linear interpolation between adjacent target_att values.
-    Returns a DataFrame with one row per (mu_baseline, sigma_baseline, rho, h_init).
     """
-    group_cols = ['mu_baseline', 'sigma_baseline', 'rho', 'h_init']
-    records = []
+    if group_cols is None:
+        group_cols = ['mu_baseline', 'sigma_baseline', 'rho', 'h_init']
 
+    records = []
     for keys, grp in df.groupby(group_cols):
         grp_sorted = grp.sort_values('target_att')
         target_atts = grp_sorted['target_att'].values
-        powers = grp_sorted['power'].values
+        powers = grp_sorted[power_col].values
         mde = np.nan
 
         if (powers >= 0.80).any():
@@ -181,7 +186,10 @@ def compute_mde_table(df):
                 else:
                     mde = t_hi
 
-        row = dict(zip(group_cols, keys))
+        if isinstance(keys, tuple):
+            row = dict(zip(group_cols, keys))
+        else:
+            row = {group_cols[0]: keys}
         row['mde'] = mde
         records.append(row)
 
@@ -193,7 +201,6 @@ def plot_mde_summary(mde_df, output_dir):
     plots_dir = os.path.join(output_dir, 'plots')
     os.makedirs(plots_dir, exist_ok=True)
 
-    # Average MDE across h_init and sigma_baseline for the summary view
     summary = mde_df.groupby(['mu_baseline', 'rho'])['mde'].mean().reset_index()
     summary = summary.dropna(subset=['mde'])
 
@@ -241,16 +248,227 @@ def plot_mde_summary(mde_df, output_dir):
 
 
 # ---------------------------------------------------------------------------
+# Pooled visualization: AP-only vs Pooled power comparison
+# ---------------------------------------------------------------------------
+
+def plot_pooled_power_comparison(df, output_dir):
+    """Power curves comparing AP-only vs Odisha-only vs Pooled estimation.
+
+    One figure per (rho, h_init, effect_ratio), subplots per sigma_baseline.
+    Lines colored by estimator (AP/Odisha/Pooled), averaged over mu_baseline combos.
+    """
+    plots_dir = os.path.join(output_dir, 'plots')
+    os.makedirs(plots_dir, exist_ok=True)
+
+    rho_vals = sorted(df['rho'].unique())
+    h_vals = sorted(df['h_init'].unique())
+    er_vals = sorted(df['effect_ratio'].unique())
+    sigma_vals = sorted(df['sigma_baseline'].unique())
+
+    count = 0
+    for rho in rho_vals:
+        for h in h_vals:
+            for er in er_vals:
+                n_sigma = len(sigma_vals)
+                ncols = min(n_sigma, 2)
+                nrows = int(np.ceil(n_sigma / ncols))
+                fig, axes = plt.subplots(nrows, ncols,
+                                         figsize=(6 * ncols, 4.5 * nrows),
+                                         squeeze=False)
+
+                for idx, sigma in enumerate(sigma_vals):
+                    ax = axes[idx // ncols, idx % ncols]
+                    subset = df[(df['rho'] == rho) & (df['h_init'] == h) &
+                                (df['effect_ratio'] == er) &
+                                (df['sigma_baseline'] == sigma)]
+
+                    # Average power across mu_baseline_ap and mu_baseline_od
+                    avg = subset.groupby('target_att')[
+                        ['power_ap', 'power_od', 'power_pooled']
+                    ].mean().reset_index().sort_values('target_att')
+
+                    ax.plot(avg['target_att'], avg['power_ap'],
+                            marker='s', markersize=4, color='tab:blue',
+                            label='AP only (n=50)', linewidth=1.5)
+                    ax.plot(avg['target_att'], avg['power_od'],
+                            marker='^', markersize=4, color='tab:green',
+                            label='Odisha only (n=50)', linewidth=1.5)
+                    ax.plot(avg['target_att'], avg['power_pooled'],
+                            marker='o', markersize=5, color='tab:red',
+                            label='Pooled with state FE (n=100)', linewidth=2)
+
+                    ax.axhline(0.80, color='grey', linestyle='--', linewidth=1)
+                    ax.set_title(f'{LABELS["sigma_baseline"]}={sigma}')
+                    ax.set_xlabel(LABELS['target_att'])
+                    ax.set_ylabel(LABELS['power'])
+                    ax.set_ylim(-0.02, 1.05)
+                    ax.grid(True, alpha=0.3)
+
+                    if idx == 0:
+                        ax.legend(loc='lower right', fontsize=8)
+
+                for idx in range(n_sigma, nrows * ncols):
+                    axes[idx // ncols, idx % ncols].set_visible(False)
+
+                fig.suptitle(
+                    f'Power Comparison: AP vs Odisha vs Pooled\n'
+                    f'{LABELS["rho"]}={rho}, {LABELS["h_init"]}={h}, '
+                    f'{LABELS["effect_ratio"]}={er}',
+                    fontsize=14, fontweight='bold')
+                fig.tight_layout(rect=[0, 0, 1, 0.91])
+
+                fname = f'pooled_power_comparison_rho{rho}_h{h}_er{er}.png'
+                fig.savefig(os.path.join(plots_dir, fname), dpi=SAVE_DPI)
+                plt.close(fig)
+                count += 1
+
+    print(f"  Pooled power comparison plots saved ({count} figures)")
+
+
+def plot_pooled_power_gain(df, output_dir):
+    """Heatmap of power gain from pooling (pooled power - AP power).
+
+    Averaged across mu_baseline combos. One heatmap per (sigma, effect_ratio).
+    Rows = rho, columns = target_att.
+    """
+    plots_dir = os.path.join(output_dir, 'plots')
+    os.makedirs(plots_dir, exist_ok=True)
+
+    df['power_gain'] = df['power_pooled'] - df['power_ap']
+
+    sigma_vals = sorted(df['sigma_baseline'].unique())
+    er_vals = sorted(df['effect_ratio'].unique())
+    count = 0
+
+    for sigma in sigma_vals:
+        for er in er_vals:
+            subset = df[(df['sigma_baseline'] == sigma) & (df['effect_ratio'] == er)]
+            # Average across baselines and h_init
+            avg = subset.groupby(['rho', 'target_att'])['power_gain'].mean().reset_index()
+            pivot = avg.pivot_table(index='rho', columns='target_att', values='power_gain')
+            pivot = pivot.sort_index(ascending=False)
+
+            fig, ax = plt.subplots(figsize=(10, 4))
+            sns.heatmap(pivot, annot=True, fmt='+.2f', cmap='RdBu_r',
+                        center=0, vmin=-0.2, vmax=0.3,
+                        linewidths=0.5, ax=ax,
+                        cbar_kws={'label': 'Power Gain (Pooled - AP only)'})
+            ax.set_title(
+                f'Power Gain from Pooling (AP + Odisha)\n'
+                f'{LABELS["sigma_baseline"]}={sigma}, {LABELS["effect_ratio"]}={er}',
+                fontsize=13, fontweight='bold')
+            ax.set_xlabel(LABELS['target_att'])
+            ax.set_ylabel(LABELS['rho'])
+            fig.tight_layout()
+
+            fname = f'pooled_power_gain_sd{sigma}_er{er}.png'
+            fig.savefig(os.path.join(plots_dir, fname), dpi=SAVE_DPI)
+            plt.close(fig)
+            count += 1
+
+    print(f"  Pooled power gain heatmaps saved ({count} figures)")
+
+
+def compute_pooled_mde_table(df):
+    """Compute MDE for AP-only, Odisha-only, and pooled estimators."""
+    group_cols = ['mu_baseline_ap', 'mu_baseline_od', 'sigma_baseline',
+                  'rho', 'h_init', 'effect_ratio']
+
+    mde_ap = compute_mde_table(df, power_col='power_ap', group_cols=group_cols)
+    mde_ap = mde_ap.rename(columns={'mde': 'mde_ap'})
+
+    mde_od = compute_mde_table(df, power_col='power_od', group_cols=group_cols)
+    mde_od = mde_od.rename(columns={'mde': 'mde_od'})
+
+    mde_pool = compute_mde_table(df, power_col='power_pooled', group_cols=group_cols)
+    mde_pool = mde_pool.rename(columns={'mde': 'mde_pooled'})
+
+    merged = mde_ap.merge(mde_od, on=group_cols).merge(mde_pool, on=group_cols)
+    return merged
+
+
+def plot_pooled_mde_summary(mde_df, output_dir):
+    """Bar chart comparing MDE across AP-only, Odisha-only, and pooled."""
+    plots_dir = os.path.join(output_dir, 'plots')
+    os.makedirs(plots_dir, exist_ok=True)
+
+    # Average across baselines and h_init, group by rho and effect_ratio
+    summary = mde_df.groupby(['rho', 'effect_ratio'])[
+        ['mde_ap', 'mde_od', 'mde_pooled']
+    ].mean().reset_index()
+    summary = summary.dropna(subset=['mde_ap', 'mde_pooled'], how='all')
+
+    if summary.empty:
+        print("  WARNING: No combos achieved 80% power; skipping pooled MDE summary.")
+        return
+
+    er_vals = sorted(summary['effect_ratio'].unique())
+    rho_vals = sorted(summary['rho'].unique())
+
+    fig, axes = plt.subplots(1, len(er_vals), figsize=(6 * len(er_vals), 5),
+                             squeeze=False, sharey=True)
+
+    for col_idx, er in enumerate(er_vals):
+        ax = axes[0, col_idx]
+        sub = summary[summary['effect_ratio'] == er]
+
+        x = np.arange(len(rho_vals))
+        w = 0.25
+
+        for i, (label, col, color) in enumerate([
+            ('AP only', 'mde_ap', 'tab:blue'),
+            ('Odisha only', 'mde_od', 'tab:green'),
+            ('Pooled', 'mde_pooled', 'tab:red'),
+        ]):
+            vals = [sub[sub['rho'] == r][col].values[0]
+                    if len(sub[sub['rho'] == r]) > 0 else np.nan
+                    for r in rho_vals]
+            bars = ax.bar(x + (i - 1) * w, vals, width=w, label=label,
+                          color=color, edgecolor='black', linewidth=0.5, alpha=0.8)
+            for bar, val in zip(bars, vals):
+                if not np.isnan(val):
+                    ax.text(bar.get_x() + bar.get_width() / 2,
+                            bar.get_height() + 0.003,
+                            f'{val:.2f}', ha='center', va='bottom', fontsize=7)
+
+        ax.set_xticks(x)
+        ax.set_xticklabels([str(r) for r in rho_vals])
+        ax.set_xlabel(LABELS['rho'])
+        ax.set_title(f'{LABELS["effect_ratio"]}={er}')
+        ax.grid(axis='y', alpha=0.3)
+        if col_idx == 0:
+            ax.set_ylabel(LABELS['mde'])
+            ax.legend(fontsize=8)
+
+    fig.suptitle('MDE Comparison: AP vs Odisha vs Pooled\n'
+                 '(averaged across baselines and monitoring effects)',
+                 fontsize=13, fontweight='bold')
+    fig.tight_layout(rect=[0, 0, 1, 0.90])
+    fig.savefig(os.path.join(plots_dir, 'pooled_mde_summary.png'), dpi=SAVE_DPI)
+    plt.close(fig)
+    print("  Pooled MDE summary plot saved")
+
+
+# ---------------------------------------------------------------------------
 # main
 # ---------------------------------------------------------------------------
 
 def main():
     parser = argparse.ArgumentParser(description="Visualize power simulation results.")
-    parser.add_argument('--input', type=str, default='output/power_results.csv',
-                        help="Path to power_results.csv")
+    parser.add_argument('--input', type=str, default=None,
+                        help="Path to results CSV (default: auto-detect)")
     parser.add_argument('--output_dir', type=str, default='output',
                         help="Output directory (default: output)")
+    parser.add_argument('--pooled', action='store_true',
+                        help="Visualize pooled (AP + Odisha) results")
     args = parser.parse_args()
+
+    # Auto-detect input file
+    if args.input is None:
+        if args.pooled:
+            args.input = os.path.join(args.output_dir, 'pooled_power_results.csv')
+        else:
+            args.input = os.path.join(args.output_dir, 'power_results.csv')
 
     if not os.path.isfile(args.input):
         print(f"ERROR: Input file not found: {args.input}")
@@ -263,39 +481,59 @@ def main():
 
     os.makedirs(os.path.join(args.output_dir, 'plots'), exist_ok=True)
 
-    print("Generating power curve plots...")
-    plot_power_curves(df, args.output_dir)
+    if args.pooled:
+        print("Generating pooled power comparison plots...")
+        plot_pooled_power_comparison(df, args.output_dir)
 
-    print("Generating power heatmaps...")
-    plot_power_heatmaps(df, args.output_dir)
+        print("Generating pooled power gain heatmaps...")
+        plot_pooled_power_gain(df, args.output_dir)
 
-    print("Computing MDE table...")
-    mde_df = compute_mde_table(df)
+        print("Computing pooled MDE table...")
+        mde_df = compute_pooled_mde_table(df)
+        mde_path = os.path.join(args.output_dir, 'pooled_mde_table.csv')
+        mde_df.to_csv(mde_path, index=False)
+        print(f"  Pooled MDE table saved to {mde_path}")
 
-    mde_path = os.path.join(args.output_dir, 'mde_table.csv')
-    mde_df.to_csv(mde_path, index=False)
-    print(f"  MDE table saved to {mde_path}")
+        # Print summary
+        avg = mde_df[['mde_ap', 'mde_od', 'mde_pooled']].mean()
+        print(f"\n  Average MDE — AP: {avg['mde_ap']:.3f}, "
+              f"Odisha: {avg['mde_od']:.3f}, Pooled: {avg['mde_pooled']:.3f}")
 
-    # Display MDE table with descriptive headers
-    display_df = mde_df.copy()
-    display_df['mde'] = display_df['mde'].apply(
-        lambda v: f'{v:.3f}' if pd.notna(v) else '>0.40'
-    )
-    display_df = display_df.rename(columns={
-        'mu_baseline': 'Baseline Compliance',
-        'sigma_baseline': 'Compliance SD',
-        'rho': 'Persistence',
-        'h_init': 'Monitoring Effect',
-        'mde': 'Min. Detectable Effect',
-    })
-    print()
-    print("MDE Table (min target effect on chlorination rate for 80% power):")
-    print("-" * 80)
-    print(display_df.to_string(index=False))
-    print()
+        print("\nGenerating pooled MDE summary plot...")
+        plot_pooled_mde_summary(mde_df, args.output_dir)
 
-    print("Generating MDE summary plot...")
-    plot_mde_summary(mde_df, args.output_dir)
+    else:
+        print("Generating power curve plots...")
+        plot_power_curves(df, args.output_dir)
+
+        print("Generating power heatmaps...")
+        plot_power_heatmaps(df, args.output_dir)
+
+        print("Computing MDE table...")
+        mde_df = compute_mde_table(df)
+        mde_path = os.path.join(args.output_dir, 'mde_table.csv')
+        mde_df.to_csv(mde_path, index=False)
+        print(f"  MDE table saved to {mde_path}")
+
+        display_df = mde_df.copy()
+        display_df['mde'] = display_df['mde'].apply(
+            lambda v: f'{v:.3f}' if pd.notna(v) else '>0.40'
+        )
+        display_df = display_df.rename(columns={
+            'mu_baseline': 'Baseline Compliance',
+            'sigma_baseline': 'Compliance SD',
+            'rho': 'Persistence',
+            'h_init': 'Monitoring Effect',
+            'mde': 'Min. Detectable Effect',
+        })
+        print()
+        print("MDE Table (min target effect on chlorination rate for 80% power):")
+        print("-" * 80)
+        print(display_df.to_string(index=False))
+        print()
+
+        print("Generating MDE summary plot...")
+        plot_mde_summary(mde_df, args.output_dir)
 
     print()
     print("All visualizations complete.")
