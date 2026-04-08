@@ -27,7 +27,7 @@ import numpy as np
 import pandas as pd
 from tqdm import tqdm
 
-from config import PARAM_GRID, POOLED_PARAM_GRID, N_SIMS, SEED
+from config import PARAM_GRID, POOLED_PARAM_GRID, N_SIMS, SEED, sigma_from_mu
 from estimate import run_single_sim, run_pooled_sim
 
 # Default workers: Mac M1 has 8 cores (4P + 4E), use 6 to leave headroom
@@ -47,9 +47,10 @@ def run_power_for_combo(args):
     se_arr = np.array([r['se'] for r in results], dtype=float)
     rej_arr = np.array([r['rejected'] for r in results], dtype=float)
 
+    mu = params['mu_baseline']
     return {
-        'mu_baseline': params['mu_baseline'],
-        'sigma_baseline': params['sigma_baseline'],
+        'mu_baseline': mu,
+        'sigma_baseline': params.get('sigma_baseline', sigma_from_mu(mu)),
         'target_att': params.get('target_att', np.nan),
         'rho': params['rho'],
         'h_init': params['h_init'],
@@ -86,7 +87,6 @@ def run_power_for_combo_pooled(args):
     row = {
         'mu_baseline_ap': params['mu_baseline_ap'],
         'mu_baseline_od': params['mu_baseline_od'],
-        'sigma_baseline': params['sigma_baseline'],
         'target_att': params['target_att'],
         'rho': params['rho'],
         'h_init': params['h_init'],

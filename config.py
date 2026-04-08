@@ -63,10 +63,21 @@ def mean_treatment_weeks(state_config, study_end_week=None):
 # ---------------------------------------------------------------------------
 _SWEEP_CSV = os.path.join(os.path.dirname(os.path.abspath(__file__)), 'sweep_params.csv')
 _sweep_df = pd.read_csv(_SWEEP_CSV)
-_SWEEP = {
-    row['parameter']: [float(v) for v in row['values'].split(',')]
-    for _, row in _sweep_df.iterrows()
-}
+_SWEEP = {}
+for _, row in _sweep_df.iterrows():
+    vals = row['values'].strip()
+    if ',' in vals:
+        _SWEEP[row['parameter']] = [float(v) for v in vals.split(',')]
+    else:
+        _SWEEP[row['parameter']] = float(vals)
+
+# For a binary outcome, SD is determined by the mean: sigma = factor * sqrt(mu*(1-mu))
+SIGMA_FACTOR = _SWEEP['sigma_factor']
+
+
+def sigma_from_mu(mu):
+    """Derive cross-site heterogeneity SD from baseline compliance rate."""
+    return SIGMA_FACTOR * np.sqrt(mu * (1 - mu))
 
 # ---------------------------------------------------------------------------
 # Single-state parameter grid (AP only, backward compatible)
@@ -75,7 +86,6 @@ _SWEEP = {
 # tau is derived using the finite-horizon AR(1) amplification formula.
 PARAM_GRID = {
     'mu_baseline': _SWEEP['mu_baseline'],
-    'sigma_baseline': _SWEEP['sigma_baseline'],
     'target_att': _SWEEP['target_att'],
     'rho': _SWEEP['rho'],
     'h_init': _SWEEP['h_init'],
@@ -87,7 +97,6 @@ PARAM_GRID = {
 POOLED_PARAM_GRID = {
     'mu_baseline_ap': _SWEEP['mu_baseline_ap'],
     'mu_baseline_od': _SWEEP['mu_baseline_od'],
-    'sigma_baseline': _SWEEP['sigma_baseline'],
     'target_att': _SWEEP['target_att'],
     'rho': _SWEEP['rho'],
     'h_init': _SWEEP['h_init'],
@@ -108,7 +117,6 @@ COMPARISON_N_MEASUREMENTS = [int(v) for v in _SWEEP['n_measurements']]
 
 COMPARISON_PARAM_GRID = {
     'mu_baseline': _SWEEP['mu_baseline_ap'],
-    'sigma_baseline': _SWEEP['sigma_baseline'],
     'target_att': _SWEEP['target_att'],
     'rho': _SWEEP['rho'],
     'h_init': _SWEEP['h_init'],

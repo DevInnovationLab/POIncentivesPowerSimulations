@@ -52,50 +52,44 @@ LABELS = {
 # ---------------------------------------------------------------------------
 
 def plot_power_curves(df, output_dir):
-    """Power vs target_att, one figure per (rho, h_init), subplots per sigma_baseline."""
+    """Power vs target_att, one figure per (rho, h_init), lines per mu_baseline.
+
+    sigma_baseline is averaged over if present (it is now derived from mu_baseline).
+    """
     plots_dir = os.path.join(output_dir, 'plots')
     os.makedirs(plots_dir, exist_ok=True)
 
     rho_vals = sorted(df['rho'].unique())
     h_vals = sorted(df['h_init'].unique())
-    sigma_vals = sorted(df['sigma_baseline'].unique())
     mu_vals = sorted(df['mu_baseline'].unique())
+
+    # Average over sigma_baseline if present
+    avg_cols = ['rho', 'h_init', 'mu_baseline', 'target_att']
+    df_avg = df.groupby(avg_cols, as_index=False)['power'].mean()
 
     colors = sns.color_palette('tab10', n_colors=len(mu_vals))
 
     for rho in rho_vals:
         for h in h_vals:
-            n_sigma = len(sigma_vals)
-            ncols = min(n_sigma, 2)
-            nrows = int(np.ceil(n_sigma / ncols))
-            fig, axes = plt.subplots(nrows, ncols, figsize=(6 * ncols, 4.5 * nrows),
-                                     squeeze=False)
+            fig, ax = plt.subplots(figsize=(7, 5))
 
-            for idx, sigma in enumerate(sigma_vals):
-                ax = axes[idx // ncols, idx % ncols]
-                subset = df[(df['rho'] == rho) & (df['h_init'] == h) &
-                            (df['sigma_baseline'] == sigma)]
+            subset = df_avg[(df_avg['rho'] == rho) & (df_avg['h_init'] == h)]
 
-                for mu_idx, mu in enumerate(mu_vals):
-                    sub = subset[subset['mu_baseline'] == mu].sort_values('target_att')
-                    ax.plot(sub['target_att'], sub['power'], marker='o', markersize=4,
-                            color=colors[mu_idx],
-                            label=f'Baseline={mu}', linewidth=1.5)
+            for mu_idx, mu in enumerate(mu_vals):
+                sub = subset[subset['mu_baseline'] == mu].sort_values('target_att')
+                ax.plot(sub['target_att'], sub['power'], marker='o', markersize=4,
+                        color=colors[mu_idx],
+                        label=f'Baseline={mu}', linewidth=1.5)
 
-                ax.axhline(0.80, color='grey', linestyle='--', linewidth=1,
-                           label='80% power' if idx == 0 else None)
-                ax.set_title(f'{LABELS["sigma_baseline"]}={sigma}')
-                ax.set_xlabel(LABELS['target_att'])
-                ax.set_ylabel(LABELS['power'])
-                ax.set_ylim(-0.02, 1.05)
+            ax.axhline(0.80, color='grey', linestyle='--', linewidth=1,
+                       label='80% power')
+            ax.set_xlabel(LABELS['target_att'])
+            ax.set_ylabel(LABELS['power'])
+            ax.set_ylim(-0.02, 1.05)
+            if len(subset) > 0:
                 ax.set_xlim(subset['target_att'].min(), subset['target_att'].max())
-                ax.grid(True, alpha=0.3)
-
-                if idx == 0:
-                    ax.legend(loc='lower right', fontsize=8, ncol=2)
-
-            for idx in range(n_sigma, nrows * ncols):
-                axes[idx // ncols, idx % ncols].set_visible(False)
+            ax.grid(True, alpha=0.3)
+            ax.legend(loc='lower right', fontsize=8, ncol=2)
 
             fig.suptitle(
                 f'Power Curves\n{LABELS["rho"]}={rho}, {LABELS["h_init"]}={h}',
@@ -114,43 +108,43 @@ def plot_power_curves(df, output_dir):
 # ---------------------------------------------------------------------------
 
 def plot_power_heatmaps(df, output_dir):
-    """Heatmap of power (mu_baseline x target_att) for each (rho, h_init, sigma_baseline)."""
+    """Heatmap of power (mu_baseline x target_att) for each (rho, h_init).
+
+    sigma_baseline is averaged over if present (it is now derived from mu_baseline).
+    """
     plots_dir = os.path.join(output_dir, 'plots')
     os.makedirs(plots_dir, exist_ok=True)
 
     rho_vals = sorted(df['rho'].unique())
     h_vals = sorted(df['h_init'].unique())
-    sigma_vals = sorted(df['sigma_baseline'].unique())
     count = 0
 
     for rho in rho_vals:
         for h in h_vals:
-            for sigma in sigma_vals:
-                subset = df[(df['rho'] == rho) & (df['h_init'] == h) &
-                            (df['sigma_baseline'] == sigma)]
+            subset = df[(df['rho'] == rho) & (df['h_init'] == h)]
 
-                pivot = subset.pivot_table(
-                    index='mu_baseline', columns='target_att', values='power'
-                )
-                pivot = pivot.sort_index(ascending=False)
+            pivot = subset.pivot_table(
+                index='mu_baseline', columns='target_att', values='power',
+                aggfunc='mean'
+            )
+            pivot = pivot.sort_index(ascending=False)
 
-                fig, ax = plt.subplots(figsize=(10, 5))
-                sns.heatmap(pivot, annot=True, fmt='.2f', cmap='RdYlGn',
-                            vmin=0, vmax=1, linewidths=0.5, ax=ax,
-                            cbar_kws={'label': LABELS['power']})
-                ax.set_title(
-                    f'{LABELS["power"]}\n'
-                    f'{LABELS["rho"]}={rho}, {LABELS["h_init"]}={h}, '
-                    f'{LABELS["sigma_baseline"]}={sigma}',
-                    fontsize=13, fontweight='bold')
-                ax.set_xlabel(LABELS['target_att'])
-                ax.set_ylabel(LABELS['mu_baseline'])
-                fig.tight_layout()
+            fig, ax = plt.subplots(figsize=(10, 5))
+            sns.heatmap(pivot, annot=True, fmt='.2f', cmap='RdYlGn',
+                        vmin=0, vmax=1, linewidths=0.5, ax=ax,
+                        cbar_kws={'label': LABELS['power']})
+            ax.set_title(
+                f'{LABELS["power"]}\n'
+                f'{LABELS["rho"]}={rho}, {LABELS["h_init"]}={h}',
+                fontsize=13, fontweight='bold')
+            ax.set_xlabel(LABELS['target_att'])
+            ax.set_ylabel(LABELS['mu_baseline'])
+            fig.tight_layout()
 
-                fname = f'power_heatmap_persistence{rho}_monitoring{h}_sd{sigma}.png'
-                fig.savefig(os.path.join(plots_dir, fname), dpi=SAVE_DPI)
-                plt.close(fig)
-                count += 1
+            fname = f'power_heatmap_persistence{rho}_monitoring{h}.png'
+            fig.savefig(os.path.join(plots_dir, fname), dpi=SAVE_DPI)
+            plt.close(fig)
+            count += 1
 
     print(f"  Power heatmap plots saved ({count} figures)")
 
@@ -165,7 +159,8 @@ def compute_mde_table(df, power_col='power', group_cols=None):
     Uses linear interpolation between adjacent target_att values.
     """
     if group_cols is None:
-        group_cols = ['mu_baseline', 'sigma_baseline', 'rho', 'h_init']
+        base_cols = ['mu_baseline', 'sigma_baseline', 'rho', 'h_init']
+        group_cols = [c for c in base_cols if c in df.columns]
 
     records = []
     for keys, grp in df.groupby(group_cols):
@@ -254,8 +249,9 @@ def plot_mde_summary(mde_df, output_dir):
 def plot_pooled_power_comparison(df, output_dir):
     """Power curves comparing AP-only vs Odisha-only vs Pooled estimation.
 
-    One figure per (rho, h_init, effect_ratio), subplots per sigma_baseline.
-    Lines colored by estimator (AP/Odisha/Pooled), averaged over mu_baseline combos.
+    One figure per (rho, h_init, effect_ratio).
+    Lines colored by estimator (AP/Odisha/Pooled), averaged over mu_baseline combos
+    and sigma_baseline (now derived from mu_baseline).
     """
     plots_dir = os.path.join(output_dir, 'plots')
     os.makedirs(plots_dir, exist_ok=True)
@@ -263,52 +259,37 @@ def plot_pooled_power_comparison(df, output_dir):
     rho_vals = sorted(df['rho'].unique())
     h_vals = sorted(df['h_init'].unique())
     er_vals = sorted(df['effect_ratio'].unique())
-    sigma_vals = sorted(df['sigma_baseline'].unique())
 
     count = 0
     for rho in rho_vals:
         for h in h_vals:
             for er in er_vals:
-                n_sigma = len(sigma_vals)
-                ncols = min(n_sigma, 2)
-                nrows = int(np.ceil(n_sigma / ncols))
-                fig, axes = plt.subplots(nrows, ncols,
-                                         figsize=(6 * ncols, 4.5 * nrows),
-                                         squeeze=False)
+                fig, ax = plt.subplots(figsize=(7, 5))
 
-                for idx, sigma in enumerate(sigma_vals):
-                    ax = axes[idx // ncols, idx % ncols]
-                    subset = df[(df['rho'] == rho) & (df['h_init'] == h) &
-                                (df['effect_ratio'] == er) &
-                                (df['sigma_baseline'] == sigma)]
+                subset = df[(df['rho'] == rho) & (df['h_init'] == h) &
+                            (df['effect_ratio'] == er)]
 
-                    # Average power across mu_baseline_ap and mu_baseline_od
-                    avg = subset.groupby('target_att')[
-                        ['power_ap', 'power_od', 'power_pooled']
-                    ].mean().reset_index().sort_values('target_att')
+                # Average power across mu_baseline combos (and sigma if present)
+                avg = subset.groupby('target_att')[
+                    ['power_ap', 'power_od', 'power_pooled']
+                ].mean().reset_index().sort_values('target_att')
 
-                    ax.plot(avg['target_att'], avg['power_ap'],
-                            marker='s', markersize=4, color='tab:blue',
-                            label='AP only (n=50)', linewidth=1.5)
-                    ax.plot(avg['target_att'], avg['power_od'],
-                            marker='^', markersize=4, color='tab:green',
-                            label='Odisha only (n=50)', linewidth=1.5)
-                    ax.plot(avg['target_att'], avg['power_pooled'],
-                            marker='o', markersize=5, color='tab:red',
-                            label='Pooled with state FE (n=100)', linewidth=2)
+                ax.plot(avg['target_att'], avg['power_ap'],
+                        marker='s', markersize=4, color='tab:blue',
+                        label='AP only (n=50)', linewidth=1.5)
+                ax.plot(avg['target_att'], avg['power_od'],
+                        marker='^', markersize=4, color='tab:green',
+                        label='Odisha only (n=50)', linewidth=1.5)
+                ax.plot(avg['target_att'], avg['power_pooled'],
+                        marker='o', markersize=5, color='tab:red',
+                        label='Pooled with state FE (n=100)', linewidth=2)
 
-                    ax.axhline(0.80, color='grey', linestyle='--', linewidth=1)
-                    ax.set_title(f'{LABELS["sigma_baseline"]}={sigma}')
-                    ax.set_xlabel(LABELS['target_att'])
-                    ax.set_ylabel(LABELS['power'])
-                    ax.set_ylim(-0.02, 1.05)
-                    ax.grid(True, alpha=0.3)
-
-                    if idx == 0:
-                        ax.legend(loc='lower right', fontsize=8)
-
-                for idx in range(n_sigma, nrows * ncols):
-                    axes[idx // ncols, idx % ncols].set_visible(False)
+                ax.axhline(0.80, color='grey', linestyle='--', linewidth=1)
+                ax.set_xlabel(LABELS['target_att'])
+                ax.set_ylabel(LABELS['power'])
+                ax.set_ylim(-0.02, 1.05)
+                ax.grid(True, alpha=0.3)
+                ax.legend(loc='lower right', fontsize=8)
 
                 fig.suptitle(
                     f'Power Comparison: AP vs Odisha vs Pooled\n'
@@ -328,51 +309,51 @@ def plot_pooled_power_comparison(df, output_dir):
 def plot_pooled_power_gain(df, output_dir):
     """Heatmap of power gain from pooling (pooled power - AP power).
 
-    Averaged across mu_baseline combos. One heatmap per (sigma, effect_ratio).
-    Rows = rho, columns = target_att.
+    Averaged across mu_baseline combos (and sigma_baseline if present).
+    One heatmap per effect_ratio. Rows = rho, columns = target_att.
     """
     plots_dir = os.path.join(output_dir, 'plots')
     os.makedirs(plots_dir, exist_ok=True)
 
+    df = df.copy()
     df['power_gain'] = df['power_pooled'] - df['power_ap']
 
-    sigma_vals = sorted(df['sigma_baseline'].unique())
     er_vals = sorted(df['effect_ratio'].unique())
     count = 0
 
-    for sigma in sigma_vals:
-        for er in er_vals:
-            subset = df[(df['sigma_baseline'] == sigma) & (df['effect_ratio'] == er)]
-            # Average across baselines and h_init
-            avg = subset.groupby(['rho', 'target_att'])['power_gain'].mean().reset_index()
-            pivot = avg.pivot_table(index='rho', columns='target_att', values='power_gain')
-            pivot = pivot.sort_index(ascending=False)
+    for er in er_vals:
+        subset = df[df['effect_ratio'] == er]
+        # Average across baselines, h_init, and sigma_baseline
+        avg = subset.groupby(['rho', 'target_att'])['power_gain'].mean().reset_index()
+        pivot = avg.pivot_table(index='rho', columns='target_att', values='power_gain')
+        pivot = pivot.sort_index(ascending=False)
 
-            fig, ax = plt.subplots(figsize=(10, 4))
-            sns.heatmap(pivot, annot=True, fmt='+.2f', cmap='RdBu_r',
-                        center=0, vmin=-0.2, vmax=0.3,
-                        linewidths=0.5, ax=ax,
-                        cbar_kws={'label': 'Power Gain (Pooled - AP only)'})
-            ax.set_title(
-                f'Power Gain from Pooling (AP + Odisha)\n'
-                f'{LABELS["sigma_baseline"]}={sigma}, {LABELS["effect_ratio"]}={er}',
-                fontsize=13, fontweight='bold')
-            ax.set_xlabel(LABELS['target_att'])
-            ax.set_ylabel(LABELS['rho'])
-            fig.tight_layout()
+        fig, ax = plt.subplots(figsize=(10, 4))
+        sns.heatmap(pivot, annot=True, fmt='+.2f', cmap='RdBu_r',
+                    center=0, vmin=-0.2, vmax=0.3,
+                    linewidths=0.5, ax=ax,
+                    cbar_kws={'label': 'Power Gain (Pooled - AP only)'})
+        ax.set_title(
+            f'Power Gain from Pooling (AP + Odisha)\n'
+            f'{LABELS["effect_ratio"]}={er}',
+            fontsize=13, fontweight='bold')
+        ax.set_xlabel(LABELS['target_att'])
+        ax.set_ylabel(LABELS['rho'])
+        fig.tight_layout()
 
-            fname = f'pooled_power_gain_sd{sigma}_er{er}.png'
-            fig.savefig(os.path.join(plots_dir, fname), dpi=SAVE_DPI)
-            plt.close(fig)
-            count += 1
+        fname = f'pooled_power_gain_er{er}.png'
+        fig.savefig(os.path.join(plots_dir, fname), dpi=SAVE_DPI)
+        plt.close(fig)
+        count += 1
 
     print(f"  Pooled power gain heatmaps saved ({count} figures)")
 
 
 def compute_pooled_mde_table(df):
     """Compute MDE for AP-only, Odisha-only, and pooled estimators."""
-    group_cols = ['mu_baseline_ap', 'mu_baseline_od', 'sigma_baseline',
-                  'rho', 'h_init', 'effect_ratio']
+    base_cols = ['mu_baseline_ap', 'mu_baseline_od', 'sigma_baseline',
+                 'rho', 'h_init', 'effect_ratio']
+    group_cols = [c for c in base_cols if c in df.columns]
 
     mde_ap = compute_mde_table(df, power_col='power_ap', group_cols=group_cols)
     mde_ap = mde_ap.rename(columns={'mde': 'mde_ap'})
@@ -519,13 +500,15 @@ def main():
         display_df['mde'] = display_df['mde'].apply(
             lambda v: f'{v:.3f}' if pd.notna(v) else '>0.40'
         )
-        display_df = display_df.rename(columns={
+        rename_map = {
             'mu_baseline': 'Baseline Compliance',
-            'sigma_baseline': 'Compliance SD',
             'rho': 'Persistence',
             'h_init': 'Monitoring Effect',
             'mde': 'Min. Detectable Effect',
-        })
+        }
+        if 'sigma_baseline' in display_df.columns:
+            rename_map['sigma_baseline'] = 'Compliance SD'
+        display_df = display_df.rename(columns=rename_map)
         print()
         print("MDE Table (min target effect on chlorination rate for 80% power):")
         print("-" * 80)

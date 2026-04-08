@@ -2,7 +2,7 @@ parameter,values,description,unit
 mu_baseline,"0.2, 0.3, 0.4, 0.5, 0.6, 0.7",Mean baseline chlorination compliance rate (AP single-state sweep),proportion (0-1)
 mu_baseline_ap,"0.3, 0.5, 0.7",Mean baseline chlorination compliance rate in Andhra Pradesh,proportion (0-1)
 mu_baseline_od,"0.3, 0.5, 0.7",Mean baseline chlorination compliance rate in Odisha,proportion (0-1)
-sigma_baseline,"0.10, 0.15, 0.20, 0.25",Standard deviation of site-level baseline compliance (cross-site heterogeneity),proportion (0-1)
+sigma_factor,0.8,Fraction of Bernoulli SD used for cross-site heterogeneity: sigma = factor * sqrt(mu*(1-mu)),dimensionless (0-1)
 target_att,"0.02, 0.05, 0.08, 0.10, 0.12, 0.15, 0.20, 0.25, 0.30, 0.40",Target average treatment effect on chlorination rate (the estimand),percentage points (0-1)
 rho,"0.5, 0.7, 0.9",AR(1) behavioral persistence — autocorrelation of PO chlorination decisions week-to-week,dimensionless (0-1)
 h_init,"-0.10, -0.05, 0.0, 0.05, 0.10",Initial Hawthorne/monitoring effect on compliance at start of observation (decays linearly to 0),percentage points (-1 to 1)

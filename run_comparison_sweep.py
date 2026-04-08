@@ -57,7 +57,6 @@ def _run_one_scenario(args):
             sim_params = {
                 'mu_baseline_ap': params['mu_baseline'],
                 'mu_baseline_od': params['mu_baseline'],
-                'sigma_baseline': params['sigma_baseline'],
                 'target_att': params['target_att'],
                 'rho': params['rho'],
                 'h_init': params['h_init'],

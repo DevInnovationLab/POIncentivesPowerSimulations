@@ -12,6 +12,7 @@ from config import (
     N_MEASUREMENTS, STUDY_END_WEEK, TRAINING_WEEKS, STABILIZATION_WEEKS,
     TRAINING_REL_START, TREATMENT_REL_START,
     AP_CONFIG, make_install_weeks, mean_treatment_weeks,
+    sigma_from_mu,
 )
 
 
@@ -63,7 +64,7 @@ def generate_state_panel(params, rng, state_config, state_label,
     pd.DataFrame
     """
     mu = params['mu_baseline']
-    sigma = params['sigma_baseline']
+    sigma = params.get('sigma_baseline', sigma_from_mu(mu))
     rho = params['rho']
     h_init = params['h_init']
     n_measurements = params.get('n_measurements', N_MEASUREMENTS)
@@ -196,25 +197,27 @@ def generate_pooled_panel(params, rng):
     if 'study_end_week' in params:
         extra['study_end_week'] = params['study_end_week']
 
-    # AP params
+    # AP params (sigma derived from mu unless explicitly provided)
     ap_params = {
         'mu_baseline': params['mu_baseline_ap'],
-        'sigma_baseline': params['sigma_baseline'],
         'target_att': params['target_att'],
         'rho': rho,
         'h_init': params['h_init'],
         **extra,
     }
+    if 'sigma_baseline' in params:
+        ap_params['sigma_baseline'] = params['sigma_baseline']
 
     # Odisha params: different baseline, scaled treatment effect
     od_params = {
         'mu_baseline': params['mu_baseline_od'],
-        'sigma_baseline': params['sigma_baseline'],
         'target_att': params['target_att'] * effect_ratio,
         'rho': rho,
         'h_init': params['h_init'],
         **extra,
     }
+    if 'sigma_baseline' in params:
+        od_params['sigma_baseline'] = params['sigma_baseline']
 
     ap_panel = generate_state_panel(ap_params, rng, AP_CONFIG, 'AP',
                                      site_id_offset=0)
@@ -238,8 +241,7 @@ def main():
 
     # --- Single-state (AP) example ---
     ap_params = {
-        'mu_baseline': 0.4, 'sigma_baseline': 0.15,
-        'target_att': 0.15, 'rho': 0.5, 'h_init': 0.0,
+        'mu_baseline': 0.4, 'target_att': 0.15, 'rho': 0.5, 'h_init': 0.0,
     }
     panel_ap = generate_panel(ap_params, rng)
     panel_ap.to_csv('output/example_panel.csv', index=False)
@@ -253,8 +255,8 @@ def main():
     rng2 = np.random.default_rng(42)
     pooled_params = {
         'mu_baseline_ap': 0.4, 'mu_baseline_od': 0.3,
-        'sigma_baseline': 0.15, 'target_att': 0.15,
-        'rho': 0.5, 'h_init': 0.0, 'effect_ratio': 1.0,
+        'target_att': 0.15, 'rho': 0.5, 'h_init': 0.0,
+        'effect_ratio': 1.0,
     }
     panel_pooled = generate_pooled_panel(pooled_params, rng2)
     panel_pooled.to_csv('output/example_panel_pooled.csv', index=False)

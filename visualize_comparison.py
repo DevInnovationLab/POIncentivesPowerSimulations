@@ -67,7 +67,8 @@ def interpolate_mde(grp, power_threshold=0.80):
 def compute_mde_comparison(df):
     """Compute MDE for each (mode, n_measurements, duration, param combo)."""
     scenario_cols = ['mode', 'n_measurements', 'duration_label']
-    param_cols = ['mu_baseline', 'sigma_baseline', 'rho', 'h_init']
+    base_param_cols = ['mu_baseline', 'sigma_baseline', 'rho', 'h_init']
+    param_cols = [c for c in base_param_cols if c in df.columns]
     group_cols = scenario_cols + param_cols
 
     records = []
