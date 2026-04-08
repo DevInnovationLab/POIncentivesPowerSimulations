@@ -18,8 +18,8 @@ Each village passes through four phases, staggered by its installation date:
 |-------|---------------|-------------|
 | **Installation** | Week 0 | ILC device installed at village water point |
 | **Stabilization** | Weeks 1–4 | Equipment settles in; no monitoring or data collection |
-| **Training & Monitoring** | Weeks 5–8 | PO trained on digital self-reporting app; independent chlorine measurements begin (3x/week); this serves as the **pre-treatment baseline** |
-| **Treatment Period** | Weeks 9–56 (48 weeks) | Random half of villages begin receiving payments for chlorine presence; monitoring continues for all villages |
+| **Training & Monitoring** | Weeks 5–8 | PO trained on digital self-reporting app; independent chlorine measurements begin (default 2x/week); this serves as the **pre-treatment baseline** |
+| **Treatment Period** | Weeks 9 onward (variable duration) | Random half of villages begin receiving payments for chlorine presence; monitoring continues for all villages. Duration depends on installation date and study end week (default 78 weeks from AP start). |
 
 ### 1.3 Installation Schedule
 
@@ -39,13 +39,13 @@ At the start of each village's treatment period (relative week 9), villages are 
 
 ### 1.5 Outcome Measurement
 
-Each week during the monitoring and treatment periods, three independent chlorine measurements are taken at the water point. Each measurement is binary (chlorine detected or not). The weekly outcome is the **proportion of positive measurements**:
+Each week during the monitoring and treatment periods, independent chlorine measurements are taken at the water point (default 2 per week; configurable via `n_measurements` in `sweep_params.csv`). Each measurement is binary (chlorine detected or not). The weekly outcome is the **proportion of positive measurements**:
 
 ```
-Y_it = (m1 + m2 + m3) / 3 ∈ {0, 1/3, 2/3, 1}
+Y_it = (1/K) · Σ m_j ∈ {0, 1/K, 2/K, ..., 1}
 ```
 
-where m_j ∈ {0, 1} for j = 1, 2, 3.
+where m_j ∈ {0, 1} for j = 1, ..., K and K is the number of measurements per week.
 
 ---
 
@@ -82,11 +82,11 @@ where:
 
 **Why AR(1)?** Pump operator behavior is unlikely to be independent week-to-week. A PO who chlorinated last week may have established a routine, purchased supplies, or simply formed a habit. The AR(1) process captures this behavioral persistence. The parameter ρ controls the strength: ρ = 0 means fully independent decisions each week; ρ = 0.9 means behavior is highly persistent and slow to change.
 
-**Measurement process:** Given propensity p_it, the three weekly measurements are independent Bernoulli draws:
+**Measurement process:** Given propensity p_it, the K weekly measurements are independent Bernoulli draws:
 
 ```
-m_j ~ Bernoulli(p_it)   for j = 1, 2, 3
-Y_it = (m1 + m2 + m3) / 3
+m_j ~ Bernoulli(p_it)   for j = 1, ..., K
+Y_it = (1/K) · Σ m_j
 ```
 
 The noisy outcome Y_it (not the latent propensity p_it) feeds back into the AR(1) process. This means measurement noise propagates through the behavioral dynamics, which is realistic: the PO observes whether he actually chlorinated (not his latent propensity), and that observation influences next week's behavior.
@@ -177,12 +177,14 @@ This is correct because:
 
 ### 3.3 Hypothesis Test
 
-We test the sharp null H₀: ATT = 0 using a z-test:
+We test the sharp null H₀: ATT = 0 using Welch's t-test (unequal variance two-sample t-test):
 
 ```
-z = ATT_hat / SE
-Reject H₀ if |z| > 1.96 (two-sided, α = 0.05)
+t = ATT_hat / SE
+Reject H₀ if p-value < 0.05 (two-sided)
 ```
+
+The t-test uses Satterthwaite degrees of freedom, which is more appropriate than a z-test when each arm has only 25 clusters.
 
 ### 3.4 Verification
 
@@ -208,6 +210,19 @@ This is repeated 1,000 times per parameter combination. **Power** is the proport
 
 ### 4.2 Parameter Sweep
 
+All sweep ranges are defined in **`sweep_params.csv`**, a single CSV file that serves as the source of truth for every parameter grid. Edit this file to adjust the sweep ranges to your preferences — the code reads it at runtime.
+
+The CSV has four columns:
+
+| Column | Purpose |
+|--------|---------|
+| `parameter` | Parameter name (used by code) |
+| `values` | Comma-separated list of values to sweep |
+| `description` | Human-readable explanation of the parameter |
+| `unit` | Unit of measurement |
+
+Default sweep ranges:
+
 | Parameter | Description | Values | Count |
 |-----------|-------------|--------|-------|
 | `mu_baseline` | Baseline Compliance Rate | 0.2, 0.3, 0.4, 0.5, 0.6, 0.7 | 6 |
@@ -215,8 +230,13 @@ This is repeated 1,000 times per parameter combination. **Power** is the proport
 | `target_att` | Target Effect on Chlorination Rate | 0.02, 0.05, 0.08, 0.10, 0.12, 0.15, 0.20, 0.25, 0.30, 0.40 | 10 |
 | `rho` | Behavioral Persistence (AR1) | 0.5, 0.7, 0.9 | 3 |
 | `h_init` | Initial Monitoring Effect | -0.10, -0.05, 0, +0.05, +0.10 | 5 |
+| `mu_baseline_ap` | AP Baseline (pooled mode) | 0.3, 0.5, 0.7 | 3 |
+| `mu_baseline_od` | Odisha Baseline (pooled mode) | 0.3, 0.5, 0.7 | 3 |
+| `effect_ratio` | Odisha/AP Effect Ratio (pooled mode) | 0.5, 1.0, 1.5 | 3 |
+| `n_measurements` | Chlorine Tests per Week (comparison mode) | 2, 3 | 2 |
+| `study_end_week` | Study Duration in Weeks (comparison mode) | 26, 52, 78 | 3 |
 
-**Total: 6 × 4 × 10 × 3 × 5 = 3,600 parameter combinations × 1,000 simulations = 3,600,000 total simulations.**
+**Single-state sweep: 6 × 4 × 10 × 3 × 5 = 3,600 parameter combinations × 1,000 simulations = 3,600,000 total simulations.**
 
 ### 4.3 Key Output: Minimum Detectable Effect (MDE)
 
@@ -311,12 +331,16 @@ python visualize.py
 
 | File | Purpose |
 |------|---------|
-| `config.py` | Parameter grids, constants, installation schedule |
-| `generate_data.py` | Data generating process (Stage 1) |
-| `estimate.py` | Difference-in-differences estimator (Stage 2) |
-| `run_power_sweep.py` | Parallel power sweep with HPC support (Stage 3) |
-| `visualize.py` | Plots and MDE table (Stage 4) |
-| `submit_hpc.sh` | SLURM job submission script for UChicago RCC |
+| `sweep_params.csv` | **Single source of truth** for all parameter sweep ranges — edit this to change what gets swept |
+| `config.py` | Loads `sweep_params.csv`, defines parameter grids, constants, installation schedules |
+| `generate_data.py` | Data generating process — single-state and pooled multi-state panels |
+| `estimate.py` | Difference-in-differences estimator — single-state and pooled with state FE |
+| `run_power_sweep.py` | Parallel power sweep with `--pooled` and `--hpc` modes |
+| `run_comparison_sweep.py` | Comprehensive comparison sweep (AP vs pooled, measurements, durations) |
+| `visualize.py` | Single-state and pooled plots and MDE tables |
+| `visualize_comparison.py` | Comparison plots: MDE over time, power gain from pooling |
+| `submit_hpc.sh` | SLURM job submission script for UChicago RCC (supports `--comparison`, `--pooled`) |
+| `INSTRUCTIONS.md` | Step-by-step guide for running on HPC |
 | `requirements.txt` | Python dependencies |
 | `docs/` | Reference documentation for the HPC partition |
 
