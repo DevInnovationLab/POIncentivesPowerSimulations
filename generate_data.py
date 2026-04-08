@@ -155,7 +155,7 @@ def generate_state_panel(params, rng, state_config, state_label,
                 p_it[i],
             ))
 
-        y_prev = Y_it
+        y_prev = p_it
 
     panel = pd.DataFrame(all_rows, columns=[
         'site_id', 'calendar_week', 'relative_week', 'Y', 'treated',
