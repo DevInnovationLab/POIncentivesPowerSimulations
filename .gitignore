@@ -1,6 +1,5 @@
 __pycache__/
 *.pyc
-output/
 logs/
 *.tar.gz
 .DS_Store
