@@ -1,6 +1,8 @@
 """Shared configuration for the power simulation."""
 
+import os
 import numpy as np
+import pandas as pd
 
 # ---------------------------------------------------------------------------
 # Global settings
@@ -57,49 +59,57 @@ def mean_treatment_weeks(state_config, study_end_week=None):
 
 
 # ---------------------------------------------------------------------------
+# Load sweep ranges from CSV
+# ---------------------------------------------------------------------------
+_SWEEP_CSV = os.path.join(os.path.dirname(os.path.abspath(__file__)), 'sweep_params.csv')
+_sweep_df = pd.read_csv(_SWEEP_CSV)
+_SWEEP = {
+    row['parameter']: [float(v) for v in row['values'].split(',')]
+    for _, row in _sweep_df.iterrows()
+}
+
+# ---------------------------------------------------------------------------
 # Single-state parameter grid (AP only, backward compatible)
 # ---------------------------------------------------------------------------
 # NOTE: target_att is the expected dynamic effect on outcomes (the estimand).
 # tau is derived using the finite-horizon AR(1) amplification formula.
 PARAM_GRID = {
-    'mu_baseline': [0.2, 0.3, 0.4, 0.5, 0.6, 0.7],
-    'sigma_baseline': [0.10, 0.15, 0.20, 0.25],
-    'target_att': [0.02, 0.05, 0.08, 0.10, 0.12, 0.15, 0.20, 0.25, 0.30, 0.40],
-    'rho': [0.5, 0.7, 0.9],
-    'h_init': [-0.10, -0.05, 0.0, 0.05, 0.10],
+    'mu_baseline': _SWEEP['mu_baseline'],
+    'sigma_baseline': _SWEEP['sigma_baseline'],
+    'target_att': _SWEEP['target_att'],
+    'rho': _SWEEP['rho'],
+    'h_init': _SWEEP['h_init'],
 }
 
 # ---------------------------------------------------------------------------
 # Pooled (two-state) parameter grid
 # ---------------------------------------------------------------------------
 POOLED_PARAM_GRID = {
-    'mu_baseline_ap': [0.3, 0.5, 0.7],
-    'mu_baseline_od': [0.3, 0.5, 0.7],
-    'sigma_baseline': [0.10, 0.20],
-    'target_att': [0.02, 0.05, 0.08, 0.10, 0.12, 0.15, 0.20, 0.25, 0.30, 0.40],
-    'rho': [0.5, 0.7, 0.9],
-    'h_init': [-0.05, 0.0, 0.05],
-    'effect_ratio': [0.5, 1.0, 1.5],
+    'mu_baseline_ap': _SWEEP['mu_baseline_ap'],
+    'mu_baseline_od': _SWEEP['mu_baseline_od'],
+    'sigma_baseline': _SWEEP['sigma_baseline'],
+    'target_att': _SWEEP['target_att'],
+    'rho': _SWEEP['rho'],
+    'h_init': _SWEEP['h_init'],
+    'effect_ratio': _SWEEP['effect_ratio'],
 }
 
 # ---------------------------------------------------------------------------
 # Comprehensive comparison grid
 # ---------------------------------------------------------------------------
-# Sweeps across: mode (AP-only vs pooled), n_measurements (2 vs 3),
-# study duration (6mo, 1yr, 1.5yr from AP start)
+# Sweeps across: mode (AP-only vs pooled), n_measurements, study duration
 STUDY_DURATIONS = {
-    '6mo': 26,    # 26 weeks from AP start
-    '1yr': 52,    # 52 weeks
-    '1.5yr': 78,  # 78 weeks (full study)
+    f'{int(w)}wk': int(w) for w in _SWEEP['study_end_week']
 }
+# Override with readable labels
+STUDY_DURATIONS = {'6mo': 26, '1yr': 52, '1.5yr': 78}
 
-COMPARISON_N_MEASUREMENTS = [2, 3]
+COMPARISON_N_MEASUREMENTS = [int(v) for v in _SWEEP['n_measurements']]
 
-# Reduced grid for the comparison sweep (keeps total combos manageable)
 COMPARISON_PARAM_GRID = {
-    'mu_baseline': [0.3, 0.5, 0.7],
-    'sigma_baseline': [0.10, 0.20],
-    'target_att': [0.02, 0.05, 0.08, 0.10, 0.12, 0.15, 0.20, 0.25, 0.30, 0.40],
-    'rho': [0.5, 0.7, 0.9],
-    'h_init': [-0.05, 0.0, 0.05],
+    'mu_baseline': _SWEEP['mu_baseline_ap'],
+    'sigma_baseline': _SWEEP['sigma_baseline'],
+    'target_att': _SWEEP['target_att'],
+    'rho': _SWEEP['rho'],
+    'h_init': _SWEEP['h_init'],
 }
