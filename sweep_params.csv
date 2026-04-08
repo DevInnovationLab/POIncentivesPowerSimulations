@@ -1,11 +1,11 @@
-parameter,values
-mu_baseline,"0.2, 0.3, 0.4, 0.5, 0.6, 0.7"
-mu_baseline_ap,"0.3, 0.5, 0.7"
-mu_baseline_od,"0.3, 0.5, 0.7"
-sigma_baseline,"0.10, 0.15, 0.20, 0.25"
-target_att,"0.02, 0.05, 0.08, 0.10, 0.12, 0.15, 0.20, 0.25, 0.30, 0.40"
-rho,"0.5, 0.7, 0.9"
-h_init,"-0.10, -0.05, 0.0, 0.05, 0.10"
-effect_ratio,"0.5, 1.0, 1.5"
-n_measurements,"2, 3"
-study_end_week,"26, 52, 78"
+parameter,values,description,unit
+mu_baseline,"0.2, 0.3, 0.4, 0.5, 0.6, 0.7",Mean baseline chlorination compliance rate (AP single-state sweep),proportion (0-1)
+mu_baseline_ap,"0.3, 0.5, 0.7",Mean baseline chlorination compliance rate in Andhra Pradesh,proportion (0-1)
+mu_baseline_od,"0.3, 0.5, 0.7",Mean baseline chlorination compliance rate in Odisha,proportion (0-1)
+sigma_baseline,"0.10, 0.15, 0.20, 0.25",Standard deviation of site-level baseline compliance (cross-site heterogeneity),proportion (0-1)
+target_att,"0.02, 0.05, 0.08, 0.10, 0.12, 0.15, 0.20, 0.25, 0.30, 0.40",Target average treatment effect on chlorination rate (the estimand),percentage points (0-1)
+rho,"0.5, 0.7, 0.9",AR(1) behavioral persistence — autocorrelation of PO chlorination decisions week-to-week,dimensionless (0-1)
+h_init,"-0.10, -0.05, 0.0, 0.05, 0.10",Initial Hawthorne/monitoring effect on compliance at start of observation (decays linearly to 0),percentage points (-1 to 1)
+effect_ratio,"0.5, 1.0, 1.5",Ratio of Odisha treatment effect to AP treatment effect (Odisha ATT = target_att * effect_ratio),dimensionless
+n_measurements,"2, 3",Independent chlorine presence measurements per site per week,count
+study_end_week,"26, 52, 78",Calendar week when data collection ends (26=6mo 52=1yr 78=1.5yr from AP start),weeks
